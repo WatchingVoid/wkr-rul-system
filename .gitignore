@@ -1,0 +1,27 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.pdb
+.vs/
+*.log
+
+# EF / build artifacts
+**/Migrations/*snapshot.cs
+# (если хочешь хранить миграции — УДАЛИ строку выше, лучше оставить миграции в репо)
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Docker
+**/.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db

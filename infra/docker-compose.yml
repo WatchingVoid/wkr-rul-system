@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: wkr
+      POSTGRES_PASSWORD: wkr
+      POSTGRES_DB: wkr
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wkr -d wkr"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  adminer:
+    image: adminer:4
+    ports: ["8080:8080"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ml:
+    build: ../ml-service
+    ports: ["8001:8001"]
+
+  backend:
+    build: ../backend
+    environment:
+      ASPNETCORE_URLS: http://+:8000
+      ConnectionStrings__Pg: Host=db;Port=5432;Database=wkr;Username=wkr;Password=wkr
+      Ml__BaseUrl: http://ml:8001
+      Rul__WindowSize: "50"
+      Rul__PeriodSeconds: "5"
+    ports: ["8000:8000"]
+    depends_on:
+      db:
+        condition: service_healthy
+      ml:
+        condition: service_started
