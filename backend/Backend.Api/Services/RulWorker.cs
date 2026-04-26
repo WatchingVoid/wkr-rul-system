@@ -1,20 +1,24 @@
-using Microsoft.EntityFrameworkCore;
-using Backend.Api.Data;
-using Backend.Api.Entities;
 using Backend.Api.Models;
 
 namespace Backend.Api.Services;
 
 public sealed class RulWorker : BackgroundService
 {
-    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly TelemetryRepository _telemetry;
+    private readonly RulRepository _rul;
     private readonly MlClient _ml;
     private readonly IConfiguration _cfg;
     private readonly ILogger<RulWorker> _log;
 
-    public RulWorker(IServiceScopeFactory scopeFactory, MlClient ml, IConfiguration cfg, ILogger<RulWorker> log)
+    public RulWorker(
+        TelemetryRepository telemetry,
+        RulRepository rul,
+        MlClient ml,
+        IConfiguration cfg,
+        ILogger<RulWorker> log)
     {
-        _scopeFactory = scopeFactory;
+        _telemetry = telemetry;
+        _rul = rul;
         _ml = ml;
         _cfg = cfg;
         _log = log;
@@ -24,8 +28,11 @@ public sealed class RulWorker : BackgroundService
     {
         var windowSize = _cfg.GetValue<int>("Rul:WindowSize", 50);
         var periodSec = _cfg.GetValue<int>("Rul:PeriodSeconds", 5);
+        var minWindowSize = Math.Max(10, windowSize / 3);
+        var modelVersion = _cfg["Ml:ModelVersion"] ?? "external";
 
-        _log.LogInformation("RulWorker started: windowSize={WindowSize}, period={PeriodSec}s", windowSize, periodSec);
+        _log.LogInformation("RulWorker started: windowSize={WindowSize}, period={PeriodSec}s",
+            windowSize, periodSec);
 
         var timer = new PeriodicTimer(TimeSpan.FromSeconds(periodSec));
 
@@ -33,49 +40,49 @@ public sealed class RulWorker : BackgroundService
         {
             try
             {
-                using var scope = _scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-                // Берём последние windowSize точек резания (cut_flag = true)
-                var rows = await db.TelemetrySpindle
-                    .Where(x => x.CutFlag)
-                    .OrderByDescending(x => x.Ts)
-                    .Take(windowSize)
-                    .ToListAsync(stoppingToken);
-
-                if (rows.Count < Math.Max(10, windowSize / 3))
+                // 1) Находим активные пары станок/инструмент
+                var pairs = await _telemetry.GetActivePairsAsync(stoppingToken);
+                if (pairs.Count == 0)
                 {
-                    _log.LogDebug("Not enough cut frames: {Count}", rows.Count);
+                    _log.LogDebug("No active machine/tool pairs");
                     continue;
                 }
 
-                // Важно: окно должно идти по времени вперёд
-                rows.Reverse();
-                var last = rows[^1];
+                var stored = 0;
 
-                var req = new MlPredictRequest
+                foreach (var pair in pairs)
                 {
-                    Power = rows.Select(r => r.SpindlePowerKw).ToList(),
-                    Current = rows.Select(r => r.SpindleCurrentA).ToList(),
-                    Rpm = rows.Select(r => (float)r.SpindleRpm).ToList(),
-                };
+                    // 2) Берём окно резания
+                    var rows = await _telemetry.GetCutWindowAsync(pair.MachineId, pair.ToolId, windowSize, stoppingToken);
+                    if (rows.Count < minWindowSize)
+                        continue;
 
-                var pred = await _ml.PredictAsync(req, stoppingToken);
-                if (pred is null) continue;
+                    // 3) Готовим запрос ML (пока power/current/rpm)
+                    var req = new MlPredictRequest
+                    {
+                        Power = rows.Select(r => r.SpindlePowerKw).ToList(),
+                        Current = rows.Select(r => r.SpindleCurrentA).ToList(),
+                        Rpm = rows.Select(r => (float)r.SpindleRpm).ToList()
+                    };
 
-                db.RulPredictions.Add(new RulPredictionEntity
-                {
-                    Ts = DateTimeOffset.UtcNow,
-                    MachineId = last.MachineId,
-                    ToolId = last.ToolId,
-                    RulMinutes = pred.Rul_Minutes,
-                    AlarmLevel = pred.Alarm_Level,
-                    ModelVersion = "dev"
-                });
+                    var pred = await _ml.PredictAsync(req, stoppingToken);
+                    if (pred is null) continue;
 
-                await db.SaveChangesAsync(stoppingToken);
+                    // 4) Пишем прогноз в БД через SQL-функцию
+                    await _rul.InsertPredictionAsync(
+                        ts: DateTimeOffset.UtcNow,
+                        machineId: pair.MachineId,
+                        toolId: pair.ToolId,
+                        rulMinutes: pred.Rul_Minutes,
+                        alarmLevel: pred.Alarm_Level,
+                        modelVersion: modelVersion,
+                        ct: stoppingToken);
 
-                _log.LogInformation("RUL={Rul} min, alarm={Alarm}", pred.Rul_Minutes, pred.Alarm_Level);
+                    stored++;
+                }
+
+                if (stored > 0)
+                    _log.LogInformation("RulWorker cycle completed: {Stored} predictions stored", stored);
             }
             catch (Exception ex)
             {

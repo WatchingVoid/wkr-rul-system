@@ -11,5 +11,6 @@ public sealed class MlPredictResponse
 {
     public float Rul_Minutes { get; set; }
     public int Alarm_Level { get; set; }
+    public string? Model_Version { get; set; }
     public Dictionary<string, float>? Features { get; set; }
 }

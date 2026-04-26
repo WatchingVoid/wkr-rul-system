@@ -1,6 +1,5 @@
+using Backend.Api.Services;
 using Microsoft.AspNetCore.Mvc;
-using Backend.Api.Data;
-using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Api.Controllers;
 
@@ -8,14 +7,11 @@ namespace Backend.Api.Controllers;
 [Route("api/rul")]
 public sealed class RulController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly RulRepository _repo;
 
-    public RulController(AppDbContext db) => _db = db;
+    public RulController(RulRepository repo) => _repo = repo;
 
     [HttpGet("last")]
-    public async Task<IActionResult> Last(CancellationToken ct)
-    {
-        var last = await _db.RulPredictions.OrderByDescending(x => x.Ts).FirstOrDefaultAsync(ct);
-        return Ok(last);
-    }
+    public async Task<IActionResult> Last([FromQuery] string machineId, [FromQuery] string toolId, CancellationToken ct)
+        => Ok(await _repo.GetLastAsync(machineId, toolId, ct));
 }
