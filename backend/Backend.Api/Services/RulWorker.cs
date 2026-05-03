@@ -7,6 +7,7 @@ public sealed class RulWorker : BackgroundService
     private readonly TelemetryRepository _telemetry;
     private readonly RulRepository _rul;
     private readonly MlClient _ml;
+    private readonly FeatureExtractor _features;
     private readonly IConfiguration _cfg;
     private readonly ILogger<RulWorker> _log;
 
@@ -14,12 +15,14 @@ public sealed class RulWorker : BackgroundService
         TelemetryRepository telemetry,
         RulRepository rul,
         MlClient ml,
+        FeatureExtractor features,
         IConfiguration cfg,
         ILogger<RulWorker> log)
     {
         _telemetry = telemetry;
         _rul = rul;
         _ml = ml;
+        _features = features;
         _cfg = cfg;
         _log = log;
     }
@@ -40,7 +43,7 @@ public sealed class RulWorker : BackgroundService
         {
             try
             {
-                // 1) Находим активные пары станок/инструмент
+                // 1) Активные пары станок/инструмент
                 var pairs = await _telemetry.GetActivePairsAsync(stoppingToken);
                 if (pairs.Count == 0)
                 {
@@ -52,30 +55,30 @@ public sealed class RulWorker : BackgroundService
 
                 foreach (var pair in pairs)
                 {
-                    // 2) Берём окно резания
+                    // 2) Окно резания
                     var rows = await _telemetry.GetCutWindowAsync(pair.MachineId, pair.ToolId, windowSize, stoppingToken);
                     if (rows.Count < minWindowSize)
                         continue;
 
-                    // 3) Готовим запрос ML (пока power/current/rpm)
+                    // 3) Признаки (готовый вектор)
+                    var features = _features.ExtractFromWindow(rows);
+
                     var req = new MlPredictRequest
                     {
-                        Power = rows.Select(r => r.SpindlePowerKw).ToList(),
-                        Current = rows.Select(r => r.SpindleCurrentA).ToList(),
-                        Rpm = rows.Select(r => (float)r.SpindleRpm).ToList()
+                        Features = features
                     };
 
                     var pred = await _ml.PredictAsync(req, stoppingToken);
                     if (pred is null) continue;
 
-                    // 4) Пишем прогноз в БД через SQL-функцию
+                    // 4) Сохраняем прогноз
                     await _rul.InsertPredictionAsync(
                         ts: DateTimeOffset.UtcNow,
                         machineId: pair.MachineId,
                         toolId: pair.ToolId,
-                        rulMinutes: pred.Rul_Minutes,
-                        alarmLevel: pred.Alarm_Level,
-                        modelVersion: modelVersion,
+                        rulMinutes: pred.RulMinutes,
+                        alarmLevel: pred.AlarmLevel,
+                        modelVersion: pred.ModelVersion ?? modelVersion,
                         ct: stoppingToken);
 
                     stored++;

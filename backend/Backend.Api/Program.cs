@@ -18,6 +18,9 @@ builder.Services.AddSingleton(new JsonSerializerOptions
     PropertyNameCaseInsensitive = true,
     WriteIndented = true,
 });
+
+builder.Services.AddSingleton<FeatureExtractor>();
+
 builder.Services.AddHttpClient<MlClient>(client =>
 {
     var baseUrl = builder.Configuration["Ml:BaseUrl"] ?? "http://localhost:8001";

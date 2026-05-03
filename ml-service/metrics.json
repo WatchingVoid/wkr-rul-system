@@ -1,0 +1,18 @@
+{
+  "model_version": "xgb_rul_v1",
+  "trained_at": "2026-05-03T21:40:58.381772+00:00",
+  "mae": 9.363813400268555,
+  "rmse": 9.748271385435947,
+  "r2": 0.931200872395215,
+  "features": [
+    "p_mean",
+    "p_std",
+    "p_slope",
+    "i_mean",
+    "i_std",
+    "rpm_mean",
+    "rpm_std"
+  ],
+  "n_train": 16,
+  "n_test": 4
+}

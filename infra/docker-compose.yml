@@ -14,21 +14,21 @@ services:
       interval: 40s
       timeout: 30s
       retries: 10
-  
+
   flyway:
     image: flyway/flyway:10
-    command: >
-      -url=jdbc:postgresql://db:5432/wkr
-      -user=wkr
-      -password=wkr
-      -connectRetries=60
-      migrate
+    environment:
+      FLYWAY_URL: jdbc:postgresql://db:5432/wkr
+      FLYWAY_USER: wkr
+      FLYWAY_PASSWORD: wkr
+      FLYWAY_CONNECT_RETRIES: 60
+    command: migrate
     volumes:
       - ../db/migrations:/flyway/sql
     depends_on:
       db:
         condition: service_healthy
-  
+
   adminer:
     image: adminer:4
     ports:
@@ -41,8 +41,12 @@ services:
       context: ../ml-service
       dockerfile: Dockerfile
     environment:
-      MODEL_PATH: /app/model.joblib
-      MODEL_VERSION: external
+      MODEL_PATH: /app/model.json
+      MODEL_VERSION: xgb_rul_v1
+      METRICS_PATH: /app/metrics.json
+    volumes:
+      - ../ml-service/model.json:/app/model.json
+      - ../ml-service/metrics.json:/app/metrics.json
     ports:
       - "8001:8001"
     healthcheck:
@@ -66,6 +70,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      flyway:
+        condition: service_completed_successfully
       ml:
         condition: service_healthy
 
