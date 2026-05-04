@@ -17,12 +17,12 @@ services:
 
   flyway:
     image: flyway/flyway:10
+    command: migrate
     environment:
       FLYWAY_URL: jdbc:postgresql://db:5432/wkr
       FLYWAY_USER: wkr
       FLYWAY_PASSWORD: wkr
       FLYWAY_CONNECT_RETRIES: 60
-    command: migrate
     volumes:
       - ../db/migrations:/flyway/sql
     depends_on:
@@ -34,7 +34,8 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - db
+      flyway:
+        condition: service_completed_successfully
 
   ml:
     build:
@@ -50,7 +51,13 @@ services:
     ports:
       - "8001:8001"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')",
+        ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -61,7 +68,7 @@ services:
       dockerfile: Dockerfile
     environment:
       ASPNETCORE_URLS: http://+:8000
-      ConnectionStrings__Pg: Host=db;Port=5432;Database=wkr;Username=wkr;Password=wkr
+      ConnectionStrings__Pg: "Host=db;Port=5432;Database=wkr;Username=wkr;Password=wkr;GSS Encryption Mode=Disable"
       Ml__BaseUrl: http://ml:8001
       Rul__WindowSize: "50"
       Rul__PeriodSeconds: "5"
@@ -70,8 +77,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      flyway:
-        condition: service_completed_successfully
       ml:
         condition: service_healthy
 

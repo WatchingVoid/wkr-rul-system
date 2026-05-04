@@ -22,9 +22,9 @@ public sealed class FeatureExtractor
             ["i_std"]  = Std(current),
             ["i_slope"] = Slope(current),
 
-            ["rpm_mean"] = Mean(rpm),
+            //["rpm_mean"] = Mean(rpm),
             ["rpm_std"]  = Std(rpm),
-            ["rpm_slope"] = Slope(rpm),
+            //["rpm_slope"] = Slope(rpm),
 
             // Можно добавить ещё:
             // ["p_max"] = power.Max(),
