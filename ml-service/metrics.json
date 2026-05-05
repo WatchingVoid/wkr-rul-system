@@ -1,18 +1,21 @@
 {
-  "model_version": "xgb_rul_v1",
-  "trained_at": "2026-05-03T21:40:58.381772+00:00",
-  "mae": 9.363813400268555,
-  "rmse": 9.748271385435947,
-  "r2": 0.931200872395215,
+  "model_version": "xgb_rul_v2_9features",
+  "trained_at": "2026-05-05T12:48:43.381486+00:00",
+  "mae": 4.510546094525235,
+  "rmse": 5.932989010093414,
+  "r2": 0.984416696451126,
   "features": [
     "p_mean",
     "p_std",
     "p_slope",
     "i_mean",
     "i_std",
+    "i_slope",
     "rpm_mean",
-    "rpm_std"
+    "rpm_std",
+    "rpm_slope"
   ],
-  "n_train": 16,
-  "n_test": 4
+  "n_train": 96,
+  "n_test": 24,
+  "n_total": 120
 }
