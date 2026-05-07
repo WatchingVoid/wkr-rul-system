@@ -10,6 +10,7 @@
     "i_mean",
     "i_std",
     "i_slope",
+    "i_slope",
     "rpm_mean",
     "rpm_std",
     "rpm_slope",
