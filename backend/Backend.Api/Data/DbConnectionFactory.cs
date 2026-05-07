@@ -4,13 +4,16 @@ namespace Backend.Api.Data;
 
 public sealed class DbConnectionFactory
 {
-    private readonly string _connStr;
+    private readonly string _connectionString;
 
     public DbConnectionFactory(IConfiguration cfg)
     {
-        _connStr = cfg.GetConnectionString("Pg")
-                  ?? throw new InvalidOperationException("ConnectionStrings:Pg is missing");
+        _connectionString = cfg.GetConnectionString("Pg")
+            ?? throw new InvalidOperationException("ConnectionStrings:Pg is missing");
     }
 
-    public NpgsqlConnection Create() => new NpgsqlConnection(_connStr);
+    public NpgsqlConnection Create()
+    {
+        return new NpgsqlConnection(_connectionString);
+    }
 }
