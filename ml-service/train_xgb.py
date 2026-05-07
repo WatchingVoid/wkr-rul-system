@@ -123,6 +123,7 @@ def main():
         ),
     }
 
+
     with open(METRICS_OUT, "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
 
