@@ -1,6 +1,6 @@
 {
   "model_version": "xgb_rul_v3_formula_features",
-  "trained_at": "2026-05-07T00:24:21.707152+00:00",
+  "trained_at": "2026-05-07T20:23:28.315918+00:00",
   "model_type": "XGBRegressor",
   "target": "target_rul",
   "features": [
@@ -9,7 +9,6 @@
     "p_slope",
     "i_mean",
     "i_std",
-    "i_slope",
     "i_slope",
     "rpm_mean",
     "rpm_std",

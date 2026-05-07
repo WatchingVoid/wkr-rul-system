@@ -1,3 +1,13 @@
+drop function if exists wkr.select_cut_window(text, text, integer);
+drop function if exists wkr.get_last_rul(text, text);
+drop function if exists wkr.insert_rul_prediction(
+  timestamptz,
+  text,
+  text,
+  real,
+  int,
+  text
+);
 alter table wkr.rul_predictions
 add column if not exists alarm_code text null,
 add column if not exists state text null,
