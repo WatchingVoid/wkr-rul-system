@@ -6,23 +6,26 @@ public sealed class RulWorker : BackgroundService
 {
     private readonly TelemetryRepository _telemetry;
     private readonly RulRepository _rul;
-    private readonly MlClient _ml;
+    private readonly AlarmRepository _alarm;
     private readonly FeatureExtractor _features;
+    private readonly MlClient _ml;
     private readonly IConfiguration _cfg;
     private readonly ILogger<RulWorker> _log;
 
     public RulWorker(
         TelemetryRepository telemetry,
         RulRepository rul,
-        MlClient ml,
+        AlarmRepository alarm,
         FeatureExtractor features,
+        MlClient ml,
         IConfiguration cfg,
         ILogger<RulWorker> log)
     {
         _telemetry = telemetry;
         _rul = rul;
-        _ml = ml;
+        _alarm = alarm;
         _features = features;
+        _ml = ml;
         _cfg = cfg;
         _log = log;
     }
@@ -32,19 +35,21 @@ public sealed class RulWorker : BackgroundService
         var windowSize = _cfg.GetValue<int>("Rul:WindowSize", 50);
         var periodSec = _cfg.GetValue<int>("Rul:PeriodSeconds", 5);
         var minWindowSize = Math.Max(10, windowSize / 3);
-        var modelVersion = _cfg["Ml:ModelVersion"] ?? "external";
 
-        _log.LogInformation("RulWorker started: windowSize={WindowSize}, period={PeriodSec}s",
-            windowSize, periodSec);
+        _log.LogInformation(
+            "RulWorker started: windowSize={WindowSize}, period={PeriodSec}s",
+            windowSize,
+            periodSec
+        );
 
-        var timer = new PeriodicTimer(TimeSpan.FromSeconds(periodSec));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(periodSec));
 
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             try
             {
-                // 1) Активные пары станок/инструмент
                 var pairs = await _telemetry.GetActivePairsAsync(stoppingToken);
+
                 if (pairs.Count == 0)
                 {
                     _log.LogDebug("No active machine/tool pairs");
@@ -55,37 +60,103 @@ public sealed class RulWorker : BackgroundService
 
                 foreach (var pair in pairs)
                 {
-                    // 2) Окно резания
-                    var rows = await _telemetry.GetCutWindowAsync(pair.MachineId, pair.ToolId, windowSize, stoppingToken);
+                    var rows = await _telemetry.GetCutWindowAsync(
+                        pair.MachineId,
+                        pair.ToolId,
+                        windowSize,
+                        stoppingToken
+                    );
+
                     if (rows.Count < minWindowSize)
-                        continue;
-
-                    // 3) Признаки (готовый вектор)
-                    var features = _features.ExtractFromWindow(rows);
-
-                    var req = new MlPredictRequest
                     {
-                        Features = features
+                        _log.LogDebug(
+                            "Not enough rows for {MachineId}/{ToolId}: {Count}/{Min}",
+                            pair.MachineId,
+                            pair.ToolId,
+                            rows.Count,
+                            minWindowSize
+                        );
+
+                        continue;
+                    }
+
+                    var featureDict = _features.ExtractFromWindow(rows);
+
+                    var mlReq = new MlPredictRequest
+                    {
+                        Features = featureDict
                     };
 
-                    var pred = await _ml.PredictAsync(req, stoppingToken);
-                    if (pred is null) continue;
+                    var pred = await _ml.PredictAsync(mlReq, stoppingToken);
 
-                    // 4) Сохраняем прогноз
+                    if (pred is null)
+                    {
+                        _log.LogWarning(
+                            "ML returned null prediction for {MachineId}/{ToolId}",
+                            pair.MachineId,
+                            pair.ToolId
+                        );
+
+                        continue;
+                    }
+
+                    var now = DateTimeOffset.UtcNow;
+
                     await _rul.InsertPredictionAsync(
-                        ts: DateTimeOffset.UtcNow,
+                        ts: now,
                         machineId: pair.MachineId,
                         toolId: pair.ToolId,
                         rulMinutes: pred.RulMinutes,
                         alarmLevel: pred.AlarmLevel,
-                        modelVersion: pred.ModelVersion ?? modelVersion,
-                        ct: stoppingToken);
+                        alarmCode: pred.AlarmCode,
+                        state: pred.State,
+                        message: pred.Message,
+                        requiredAction: pred.RequiredAction,
+                        modelVersion: pred.ModelVersion,
+                        features: pred.UsedFeatures.Count > 0 ? pred.UsedFeatures : featureDict,
+                        explanation: pred.Explanation,
+                        ct: stoppingToken
+                    );
+
+                    if (pred.AlarmLevel > 0)
+                    {
+                        await _alarm.InsertAlarmAsync(
+                            ts: now,
+                            machineId: pair.MachineId,
+                            toolId: pair.ToolId,
+                            rulMinutes: pred.RulMinutes,
+                            alarmLevel: pred.AlarmLevel,
+                            alarmCode: pred.AlarmCode,
+                            alarmMessage: pred.Message,
+                            requiredAction: pred.RequiredAction,
+                            modelVersion: pred.ModelVersion,
+                            ct: stoppingToken
+                        );
+
+                        _log.LogWarning(
+                            "ALARM {AlarmCode}: {MachineId}/{ToolId}, RUL={RulMinutes:F1}, action={RequiredAction}",
+                            pred.AlarmCode,
+                            pair.MachineId,
+                            pair.ToolId,
+                            pred.RulMinutes,
+                            pred.RequiredAction
+                        );
+                    }
 
                     stored++;
                 }
 
                 if (stored > 0)
-                    _log.LogInformation("RulWorker cycle completed: {Stored} predictions stored", stored);
+                {
+                    _log.LogInformation(
+                        "RulWorker cycle completed: {Stored} predictions stored",
+                        stored
+                    );
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
             }
             catch (Exception ex)
             {

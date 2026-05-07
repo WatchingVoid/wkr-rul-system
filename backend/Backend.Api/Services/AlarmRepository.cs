@@ -1,47 +1,40 @@
-using System.Text.Json;
 using Backend.Api.Data;
 using Dapper;
 
 namespace Backend.Api.Services;
 
-public sealed class RulRepository
+public sealed class AlarmRepository
 {
     private readonly DbConnectionFactory _db;
 
-    public RulRepository(DbConnectionFactory db)
+    public AlarmRepository(DbConnectionFactory db)
     {
         _db = db;
     }
 
-    public async Task<long> InsertPredictionAsync(
+    public async Task<long> InsertAlarmAsync(
         DateTimeOffset ts,
         string machineId,
         string toolId,
         float rulMinutes,
         int alarmLevel,
         string alarmCode,
-        string state,
-        string message,
+        string alarmMessage,
         string requiredAction,
         string modelVersion,
-        Dictionary<string, float> features,
-        List<string> explanation,
         CancellationToken ct)
     {
         const string sql = """
-            select wkr.insert_rul_prediction(
+            select wkr.insert_alarm_event(
                 @Ts,
                 @MachineId,
                 @ToolId,
                 @RulMinutes,
                 @AlarmLevel,
                 @AlarmCode,
-                @State,
-                @Message,
+                @AlarmMessage,
                 @RequiredAction,
-                @ModelVersion,
-                cast(@FeaturesJson as jsonb),
-                cast(@ExplanationJson as jsonb)
+                @ModelVersion
             );
         """;
 
@@ -58,31 +51,28 @@ public sealed class RulRepository
                 RulMinutes = rulMinutes,
                 AlarmLevel = alarmLevel,
                 AlarmCode = alarmCode,
-                State = state,
-                Message = message,
+                AlarmMessage = alarmMessage,
                 RequiredAction = requiredAction,
-                ModelVersion = modelVersion,
-                FeaturesJson = JsonSerializer.Serialize(features),
-                ExplanationJson = JsonSerializer.Serialize(explanation)
+                ModelVersion = modelVersion
             },
             cancellationToken: ct
         ));
     }
 
-    public async Task<LastRulDto?> GetLastAsync(
+    public async Task<LastAlarmDto?> GetLastAlarmAsync(
         string machineId,
         string toolId,
         CancellationToken ct)
     {
         const string sql = """
             select *
-            from wkr.get_last_rul(@MachineId, @ToolId);
+            from wkr.get_last_alarm(@MachineId, @ToolId);
         """;
 
         using var conn = _db.Create();
         await conn.OpenAsync(ct);
 
-        return await conn.QueryFirstOrDefaultAsync<LastRulDto>(new CommandDefinition(
+        return await conn.QueryFirstOrDefaultAsync<LastAlarmDto>(new CommandDefinition(
             sql,
             new
             {
@@ -94,14 +84,16 @@ public sealed class RulRepository
     }
 }
 
-public sealed class LastRulDto
+public sealed class LastAlarmDto
 {
     public DateTimeOffset Ts { get; set; }
+    public string MachineId { get; set; } = "";
+    public string ToolId { get; set; } = "";
     public float RulMinutes { get; set; }
     public int AlarmLevel { get; set; }
     public string AlarmCode { get; set; } = "";
-    public string State { get; set; } = "";
-    public string Message { get; set; } = "";
+    public string AlarmMessage { get; set; } = "";
     public string RequiredAction { get; set; } = "";
+    public bool IsActive { get; set; }
     public string ModelVersion { get; set; } = "";
 }

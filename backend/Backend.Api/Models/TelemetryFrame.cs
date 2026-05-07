@@ -1,6 +1,9 @@
+namespace Backend.Api.Models;
+
 public sealed class TelemetryFrame
 {
-    public DateTimeOffset Ts { get; init; }
+    public DateTimeOffset Ts { get; init; } = DateTimeOffset.UtcNow;
+
     public string MachineId { get; init; } = "";
     public string ToolId { get; init; } = "";
 
@@ -12,6 +15,6 @@ public sealed class TelemetryFrame
     public string? Program { get; init; }
     public bool CutFlag { get; init; }
 
-    public float? ToolDiameterMm { get; init; } // для формулы v
-    public float? SpindleTorqueNm { get; init; } // если появится
+    public float? ToolDiameterMm { get; init; }
+    public float? SpindleTorqueNm { get; init; }
 }

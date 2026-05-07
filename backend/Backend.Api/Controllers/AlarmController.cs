@@ -4,12 +4,12 @@ using Microsoft.AspNetCore.Mvc;
 namespace Backend.Api.Controllers;
 
 [ApiController]
-[Route("api/rul")]
-public sealed class RulController : ControllerBase
+[Route("api/alarms")]
+public sealed class AlarmController : ControllerBase
 {
-    private readonly RulRepository _repo;
+    private readonly AlarmRepository _repo;
 
-    public RulController(RulRepository repo)
+    public AlarmController(AlarmRepository repo)
     {
         _repo = repo;
     }
@@ -20,7 +20,7 @@ public sealed class RulController : ControllerBase
         [FromQuery] string toolId,
         CancellationToken ct)
     {
-        var result = await _repo.GetLastAsync(machineId, toolId, ct);
+        var result = await _repo.GetLastAlarmAsync(machineId, toolId, ct);
         return Ok(result);
     }
 }
