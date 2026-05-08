@@ -1,5 +1,7 @@
 # wkr-rul-system — руководство по запуску и работе с проектом
 
+Для исполнения большинства скриптов в ps нужно расширить политику выполнения Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
 ## 1. Назначение проекта
 
 `wkr-rul-system` — демонстрационный программный комплекс для ВКР, предназначенный для сбора телеметрии шпинделя, расчёта производных параметров процесса резания, формирования признаков для модели машинного обучения и прогноза остаточного ресурса режущего инструмента.
@@ -511,10 +513,11 @@ cd C:\Users\grib9\wkr-rul-system\infra
 
 docker compose down -v
 
+docker compose up -d db
+
+docker compose --profile migrate run --rm flyway
+
 docker compose up -d adminer
-
-docker compose exec db psql -U wkr -d wkr -c "\dt wkr.*"
-
 docker compose up -d --build ml backend
 
 docker compose ps
