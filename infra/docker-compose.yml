@@ -11,12 +11,14 @@ services:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wkr -d wkr"]
-      interval: 40s
-      timeout: 30s
+      interval: 10s
+      timeout: 5s
       retries: 10
 
   flyway:
     image: flyway/flyway:10
+    profiles:
+      - migrate
     command: migrate
     environment:
       FLYWAY_URL: jdbc:postgresql://db:5432/wkr
@@ -34,8 +36,8 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      flyway:
-        condition: service_completed_successfully
+      db:
+        condition: service_healthy
 
   ml:
     build:
@@ -43,7 +45,7 @@ services:
       dockerfile: Dockerfile
     environment:
       MODEL_PATH: /app/model.json
-      MODEL_VERSION: xgb_rul_v1
+      MODEL_VERSION: xgb_rul_v3_formula_features
       METRICS_PATH: /app/metrics.json
     volumes:
       - ../ml-service/model.json:/app/model.json
