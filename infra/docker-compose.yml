@@ -47,6 +47,8 @@ services:
       MODEL_PATH: /app/model.json
       MODEL_VERSION: xgb_rul_v3_formula_features
       METRICS_PATH: /app/metrics.json
+      RUL_WARN_MINUTES: "120"
+      RUL_STOP_MINUTES: "95"
     volumes:
       - ../ml-service/model.json:/app/model.json
       - ../ml-service/metrics.json:/app/metrics.json
