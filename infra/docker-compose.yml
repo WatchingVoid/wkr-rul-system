@@ -66,6 +66,31 @@ services:
       timeout: 5s
       retries: 10
 
+  collector:
+    build:
+      context: ../collector/Collector.Worker
+      dockerfile: Dockerfile
+    environment:
+      BACKEND_BASE_URL: http://backend:8000
+      COLLECTOR_MODE: lifecycle
+
+      MACHINE_ID: HAAS_VF2_NGC_01
+      TOOL_ID: T12
+      TOOL_DIAMETER_MM: "10.0"
+
+      COLLECTOR_PERIOD_MS: "500"
+
+      NORMAL_FRAMES: "70"
+      WARNING_FRAMES: "90"
+      CRITICAL_FRAMES: "110"
+    depends_on:
+      db:
+        condition: service_healthy
+      ml:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
   backend:
     build:
       context: ../backend/Backend.Api
