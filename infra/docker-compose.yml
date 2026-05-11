@@ -83,6 +83,9 @@ services:
       NORMAL_FRAMES: "70"
       WARNING_FRAMES: "90"
       CRITICAL_FRAMES: "110"
+
+      STOP_AFTER_CRITICAL: "true"
+      STOP_FRAMES: "60"
     depends_on:
       db:
         condition: service_healthy

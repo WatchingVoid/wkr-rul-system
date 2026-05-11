@@ -8,6 +8,9 @@ using Microsoft.Extensions.Logging;
 
 var builder = Host.CreateApplicationBuilder(args);
 
+// Убираем лишний технический шум от HttpClient в логах
+builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
+
 builder.Services.AddHttpClient("backend", client =>
 {
     var baseUrl = Env.GetString("BACKEND_BASE_URL", "http://backend:8000");
@@ -45,6 +48,28 @@ public static class Env
             ? result
             : defaultValue;
     }
+
+    public static bool GetBool(string name, bool defaultValue)
+    {
+        var value = Environment.GetEnvironmentVariable(name);
+
+        if (string.IsNullOrWhiteSpace(value))
+            return defaultValue;
+
+        if (bool.TryParse(value, out var result))
+            return result;
+
+        return value.Trim() switch
+        {
+            "1" => true,
+            "0" => false,
+            "yes" => true,
+            "no" => false,
+            "on" => true,
+            "off" => false,
+            _ => defaultValue
+        };
+    }
 }
 
 public sealed class TelemetryCollectorWorker : BackgroundService
@@ -67,8 +92,12 @@ public sealed class TelemetryCollectorWorker : BackgroundService
     private readonly int _normalFrames;
     private readonly int _warningFrames;
     private readonly int _criticalFrames;
+    private readonly int _stopFrames;
+
+    private readonly bool _stopAfterCritical;
 
     private int _frameIndex;
+    private CollectorStage? _lastStage;
 
     public TelemetryCollectorWorker(
         IHttpClientFactory httpClientFactory,
@@ -87,16 +116,20 @@ public sealed class TelemetryCollectorWorker : BackgroundService
         _normalFrames = Env.GetInt("NORMAL_FRAMES", 70);
         _warningFrames = Env.GetInt("WARNING_FRAMES", 90);
         _criticalFrames = Env.GetInt("CRITICAL_FRAMES", 110);
+        _stopFrames = Env.GetInt("STOP_FRAMES", 60);
+
+        _stopAfterCritical = Env.GetBool("STOP_AFTER_CRITICAL", true);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation(
-            "Collector started. machineId={MachineId}, toolId={ToolId}, mode={Mode}, periodMs={PeriodMs}",
+            "Collector started. machineId={MachineId}, toolId={ToolId}, mode={Mode}, periodMs={PeriodMs}, stopAfterCritical={StopAfterCritical}",
             _machineId,
             _toolId,
             _mode,
-            _periodMs
+            _periodMs,
+            _stopAfterCritical
         );
 
         var client = _httpClientFactory.CreateClient("backend");
@@ -105,7 +138,20 @@ public sealed class TelemetryCollectorWorker : BackgroundService
         {
             try
             {
-                var frame = BuildFrame();
+                var stage = ResolveStage();
+
+                if (_lastStage != stage)
+                {
+                    _logger.LogWarning(
+                        "Collector stage changed: {OldStage} -> {NewStage}",
+                        _lastStage?.ToString() ?? "none",
+                        stage
+                    );
+
+                    _lastStage = stage;
+                }
+
+                var frame = BuildFrame(stage);
 
                 using var response = await client.PostAsJsonAsync(
                     "/api/telemetry",
@@ -124,15 +170,17 @@ public sealed class TelemetryCollectorWorker : BackgroundService
                         body
                     );
                 }
-                else if (_frameIndex % 10 == 0)
+                else if (_frameIndex % 10 == 0 || stage == CollectorStage.Stopped)
                 {
                     _logger.LogInformation(
-                        "Telemetry sent. frame={FrameIndex}, program={Program}, rpm={Rpm}, current={Current:F2}, power={Power:F2}",
+                        "Telemetry sent. frame={FrameIndex}, stage={Stage}, program={Program}, rpm={Rpm}, current={Current:F2}, power={Power:F2}, cutFlag={CutFlag}",
                         _frameIndex,
+                        stage,
                         frame.Program,
                         frame.SpindleRpm,
                         frame.SpindleCurrentA,
-                        frame.SpindlePowerKw
+                        frame.SpindlePowerKw,
+                        frame.CutFlag
                     );
                 }
 
@@ -151,19 +199,6 @@ public sealed class TelemetryCollectorWorker : BackgroundService
         }
     }
 
-    private TelemetryFrame BuildFrame()
-    {
-        var stage = ResolveStage();
-
-        return stage switch
-        {
-            CollectorStage.Normal => BuildNormalFrame(),
-            CollectorStage.Warning => BuildWarningFrame(),
-            CollectorStage.Critical => BuildCriticalFrame(),
-            _ => BuildNormalFrame()
-        };
-    }
-
     private CollectorStage ResolveStage()
     {
         if (_mode == "normal")
@@ -175,7 +210,11 @@ public sealed class TelemetryCollectorWorker : BackgroundService
         if (_mode == "critical")
             return CollectorStage.Critical;
 
-        var total = _normalFrames + _warningFrames + _criticalFrames;
+        if (_mode == "stopped" || _mode == "stop")
+            return CollectorStage.Stopped;
+
+        var stopFrames = _stopAfterCritical ? _stopFrames : 0;
+        var total = _normalFrames + _warningFrames + _criticalFrames + stopFrames;
         var pos = total <= 0 ? 0 : _frameIndex % total;
 
         if (pos < _normalFrames)
@@ -184,7 +223,22 @@ public sealed class TelemetryCollectorWorker : BackgroundService
         if (pos < _normalFrames + _warningFrames)
             return CollectorStage.Warning;
 
-        return CollectorStage.Critical;
+        if (pos < _normalFrames + _warningFrames + _criticalFrames)
+            return CollectorStage.Critical;
+
+        return CollectorStage.Stopped;
+    }
+
+    private TelemetryFrame BuildFrame(CollectorStage stage)
+    {
+        return stage switch
+        {
+            CollectorStage.Normal => BuildNormalFrame(),
+            CollectorStage.Warning => BuildWarningFrame(),
+            CollectorStage.Critical => BuildCriticalFrame(),
+            CollectorStage.Stopped => BuildStoppedFrame(),
+            _ => BuildNormalFrame()
+        };
     }
 
     private TelemetryFrame BuildNormalFrame()
@@ -197,7 +251,9 @@ public sealed class TelemetryCollectorWorker : BackgroundService
             program: "OP10_COLLECTOR_NORMAL",
             rpm: rpm,
             currentA: current,
-            powerKw: power
+            powerKw: power,
+            feedMmMin: 1200,
+            cutFlag: true
         );
     }
 
@@ -214,7 +270,9 @@ public sealed class TelemetryCollectorWorker : BackgroundService
             program: "OP10_COLLECTOR_WARNING",
             rpm: rpm,
             currentA: current,
-            powerKw: power
+            powerKw: power,
+            feedMmMin: 1200,
+            cutFlag: true
         );
     }
 
@@ -231,7 +289,21 @@ public sealed class TelemetryCollectorWorker : BackgroundService
             program: "OP10_COLLECTOR_CRITICAL",
             rpm: rpm,
             currentA: current,
-            powerKw: power
+            powerKw: power,
+            feedMmMin: 1200,
+            cutFlag: true
+        );
+    }
+
+    private TelemetryFrame BuildStoppedFrame()
+    {
+        return BuildFrameCore(
+            program: "MACHINE_STOP_RUL_CRITICAL",
+            rpm: 0,
+            currentA: 0,
+            powerKw: 0,
+            feedMmMin: 0,
+            cutFlag: false
         );
     }
 
@@ -239,7 +311,9 @@ public sealed class TelemetryCollectorWorker : BackgroundService
         string program,
         int rpm,
         double currentA,
-        double powerKw)
+        double powerKw,
+        int feedMmMin,
+        bool cutFlag)
     {
         return new TelemetryFrame
         {
@@ -249,9 +323,9 @@ public sealed class TelemetryCollectorWorker : BackgroundService
             SpindleRpm = rpm,
             SpindleCurrentA = (float)Math.Max(0.0, currentA),
             SpindlePowerKw = (float)Math.Max(0.0, powerKw),
-            FeedMmMin = 1200,
+            FeedMmMin = feedMmMin,
             Program = program,
-            CutFlag = true,
+            CutFlag = cutFlag,
             ToolDiameterMm = (float)_toolDiameterMm,
             SpindleTorqueNm = null
         };
@@ -266,7 +340,8 @@ public sealed class TelemetryCollectorWorker : BackgroundService
     {
         Normal,
         Warning,
-        Critical
+        Critical,
+        Stopped
     }
 }
 
