@@ -25,12 +25,13 @@ services:
       FLYWAY_USER: wkr
       FLYWAY_PASSWORD: wkr
       FLYWAY_CONNECT_RETRIES: 60
+      FLYWAY_DEFAULT_SCHEMA: public
     volumes:
       - ../db/migrations:/flyway/sql
     depends_on:
       db:
         condition: service_healthy
-
+      
   adminer:
     image: adminer:4
     ports:

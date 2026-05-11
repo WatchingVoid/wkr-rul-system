@@ -1,29 +1,31 @@
+using Backend.Api.Models;
+
 namespace Backend.Api.Services;
 
 public sealed class FeatureExtractor
 {
-    public Dictionary<string, float> ExtractFromWindow(IReadOnlyList<CutRow> rows)
+    public Dictionary<string, float> ExtractFromWindow(IReadOnlyList<CutWindowRow> rows)
     {
         if (rows.Count == 0)
-            throw new InvalidOperationException("Cannot extract features from empty window");
+            throw new ArgumentException("Cut window is empty", nameof(rows));
 
-        var power = rows.Select(r => r.SpindlePowerKw).ToArray();
-        var current = rows.Select(r => r.SpindleCurrentA).ToArray();
-        var rpm = rows.Select(r => (float)r.SpindleRpm).ToArray();
+        var p = rows.Select(x => (double)x.SpindlePowerKw).ToArray();
+        var i = rows.Select(x => (double)x.SpindleCurrentA).ToArray();
+        var rpm = rows.Select(x => (double)x.SpindleRpm).ToArray();
 
-        var v = rows.Select(r => r.CuttingSpeedMmin ?? 0f).ToArray();
-        var ne = rows.Select(r => r.EffectivePowerKw ?? r.SpindlePowerKw).ToArray();
-        var pz = rows.Select(r => r.TangentialForceN ?? 0f).ToArray();
+        var v = rows.Select(x => (double)(x.CuttingSpeedMmin ?? 0f)).ToArray();
+        var ne = rows.Select(x => (double)x.SpindlePowerKw).ToArray();
+        var pz = rows.Select(x => (double)(x.TangentialForceN ?? 0f)).ToArray();
 
         return new Dictionary<string, float>
         {
-            ["p_mean"] = Mean(power),
-            ["p_std"] = Std(power),
-            ["p_slope"] = Slope(power),
+            ["p_mean"] = Mean(p),
+            ["p_std"] = Std(p),
+            ["p_slope"] = Slope(p),
 
-            ["i_mean"] = Mean(current),
-            ["i_std"] = Std(current),
-            ["i_slope"] = Slope(current),
+            ["i_mean"] = Mean(i),
+            ["i_std"] = Std(i),
+            ["i_slope"] = Slope(i),
 
             ["rpm_mean"] = Mean(rpm),
             ["rpm_std"] = Std(rpm),
@@ -43,45 +45,49 @@ public sealed class FeatureExtractor
         };
     }
 
-    private static float Mean(float[] x)
+    private static float Mean(double[] values)
     {
-        return x.Length == 0 ? 0f : (float)x.Average();
-    }
-
-    private static float Std(float[] x)
-    {
-        if (x.Length == 0)
+        if (values.Length == 0)
             return 0f;
 
-        var mean = Mean(x);
-        var variance = x.Select(v => (v - mean) * (v - mean)).Average();
+        return (float)values.Average();
+    }
+
+    private static float Std(double[] values)
+    {
+        if (values.Length == 0)
+            return 0f;
+
+        var mean = values.Average();
+        var variance = values.Select(x => Math.Pow(x - mean, 2)).Average();
 
         return (float)Math.Sqrt(variance);
     }
 
-    private static float Slope(float[] x)
+    private static float Slope(double[] values)
     {
-        var n = x.Length;
-
-        if (n < 2)
+        if (values.Length < 2)
             return 0f;
 
-        double sumT = (n - 1) * n / 2.0;
-        double sumT2 = (n - 1) * n * (2 * n - 1) / 6.0;
-        double sumX = x.Sum(v => (double)v);
+        var n = values.Length;
+        var xMean = (n - 1) / 2.0;
+        var yMean = values.Average();
 
-        double sumTX = 0.0;
+        double numerator = 0;
+        double denominator = 0;
 
-        for (var i = 0; i < n; i++)
+        for (var index = 0; index < n; index++)
         {
-            sumTX += i * x[i];
+            var dx = index - xMean;
+            var dy = values[index] - yMean;
+
+            numerator += dx * dy;
+            denominator += dx * dx;
         }
 
-        var denominator = n * sumT2 - sumT * sumT;
-
-        if (Math.Abs(denominator) < 1e-9)
+        if (Math.Abs(denominator) < 0.000001)
             return 0f;
 
-        return (float)((n * sumTX - sumT * sumX) / denominator);
+        return (float)(numerator / denominator);
     }
 }

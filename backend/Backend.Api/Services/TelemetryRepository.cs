@@ -6,20 +6,23 @@ namespace Backend.Api.Services;
 
 public sealed class TelemetryRepository
 {
-    private readonly DbConnectionFactory _db;
+    private readonly DbConnectionFactory _factory;
 
-    public TelemetryRepository(DbConnectionFactory db)
+    public TelemetryRepository(DbConnectionFactory factory)
     {
-        _db = db;
+        _factory = factory;
     }
 
     public async Task<long> InsertTelemetryAsync(
-        TelemetryFrame dto,
+        TelemetryFrame frame,
         CuttingDerived derived,
+        MachineStateInfo state,
         CancellationToken ct)
     {
-        const string sql = """
-            select wkr.insert_telemetry_spindle(
+        await using var conn = _factory.Create();
+
+        var sql = """
+            select wkr.insert_telemetry_spindle_v2(
                 @Ts,
                 @MachineId,
                 @ToolId,
@@ -32,91 +35,180 @@ public sealed class TelemetryRepository
                 @ToolDiameterMm,
                 @CuttingSpeedMmin,
                 @PowerFromTorqueKw,
-                @TangentialForceN
+                @TangentialForceN,
+                @MachineState,
+                @SpindleState,
+                @StopRequired,
+                @StopReason,
+                @ControlAction
             );
-        """;
+            """;
 
-        using var conn = _db.Create();
-        await conn.OpenAsync(ct);
+        var id = await conn.QuerySingleAsync<long>(
+            new CommandDefinition(
+                sql,
+                new
+                {
+                    frame.Ts,
+                    frame.MachineId,
+                    frame.ToolId,
+                    frame.SpindleRpm,
+                    frame.SpindleCurrentA,
+                    frame.SpindlePowerKw,
+                    frame.FeedMmMin,
+                    frame.Program,
+                    frame.CutFlag,
+                    frame.ToolDiameterMm,
 
-        return await conn.ExecuteScalarAsync<long>(new CommandDefinition(
-            sql,
-            new
-            {
-                dto.Ts,
-                dto.MachineId,
-                dto.ToolId,
-                dto.SpindleRpm,
-                dto.SpindleCurrentA,
-                dto.SpindlePowerKw,
-                dto.FeedMmMin,
-                dto.Program,
-                dto.CutFlag,
-                dto.ToolDiameterMm,
-                derived.CuttingSpeedMmin,
-                derived.PowerFromTorqueKw,
-                derived.TangentialForceN
-            },
-            cancellationToken: ct
-        ));
+                    derived.CuttingSpeedMmin,
+                    derived.PowerFromTorqueKw,
+                    derived.TangentialForceN,
+
+                    state.MachineState,
+                    state.SpindleState,
+                    state.StopRequired,
+                    state.StopReason,
+                    state.ControlAction
+                },
+                cancellationToken: ct));
+
+        if (ShouldWriteMachineEvent(state))
+        {
+            await InsertMachineEventAsync(frame, state, ct);
+        }
+
+        return id;
     }
 
-    public async Task<IReadOnlyList<ActivePair>> GetActivePairsAsync(CancellationToken ct)
+    private async Task<long> InsertMachineEventAsync(
+        TelemetryFrame frame,
+        MachineStateInfo state,
+        CancellationToken ct)
     {
-        const string sql = """
+        await using var conn = _factory.Create();
+
+        var sql = """
+            select wkr.insert_machine_event(
+                @Ts,
+                @MachineId,
+                @ToolId,
+                @EventCode,
+                @EventLevel,
+                @EventMessage,
+                @MachineState,
+                @SpindleState,
+                @StopReason,
+                @ControlAction
+            );
+            """;
+
+        return await conn.QuerySingleAsync<long>(
+            new CommandDefinition(
+                sql,
+                new
+                {
+                    frame.Ts,
+                    frame.MachineId,
+                    frame.ToolId,
+                    state.EventCode,
+                    state.EventLevel,
+                    state.EventMessage,
+                    state.MachineState,
+                    state.SpindleState,
+                    state.StopReason,
+                    state.ControlAction
+                },
+                cancellationToken: ct));
+    }
+
+    private static bool ShouldWriteMachineEvent(MachineStateInfo state)
+    {
+        // Пока пишем только важные события.
+        // Обычные MACHINE_CUTTING / MACHINE_IDLE не пишем, чтобы не засорять журнал.
+        return state.EventLevel > 0
+               || state.StopRequired
+               || string.Equals(state.EventCode, "MACHINE_STOP_RUL_CRITICAL", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public async Task<IReadOnlyList<ActiveMachineToolPair>> GetActivePairsAsync(CancellationToken ct)
+    {
+        await using var conn = _factory.Create();
+
+        var sql = """
             select
-                machine_id as "MachineId",
-                tool_id as "ToolId",
-                max(ts) as "LastTs"
-            from wkr.telemetry_spindle
-            where cut_flag = true
-            group by machine_id, tool_id
-            order by max(ts) desc;
-        """;
+                t.machine_id as MachineId,
+                t.tool_id as ToolId,
+                max(t.ts) as LastTs
+            from wkr.telemetry_spindle t
+            where t.cut_flag = true
+            group by t.machine_id, t.tool_id
+            order by max(t.ts) desc;
+            """;
 
-        using var conn = _db.Create();
-        await conn.OpenAsync(ct);
-
-        var rows = await conn.QueryAsync<ActivePair>(new CommandDefinition(
-            sql,
-            cancellationToken: ct
-        ));
+        var rows = await conn.QueryAsync<ActiveMachineToolPair>(
+            new CommandDefinition(sql, cancellationToken: ct));
 
         return rows.ToList();
     }
 
-    public async Task<IReadOnlyList<CutRow>> GetCutWindowAsync(
+    public async Task<IReadOnlyList<CutWindowRow>> GetCutWindowAsync(
         string machineId,
         string toolId,
         int windowSize,
         CancellationToken ct)
     {
-        const string sql = """
-            select *
-            from wkr.select_cut_window(@MachineId, @ToolId, @WindowSize);
-        """;
+        await using var conn = _factory.Create();
 
-        using var conn = _db.Create();
-        await conn.OpenAsync(ct);
+        var sql = """
+            select
+                t.ts as Ts,
+                t.spindle_rpm as SpindleRpm,
+                t.spindle_current_a as SpindleCurrentA,
+                t.spindle_power_kw as SpindlePowerKw,
+                t.cutting_speed_mmin as CuttingSpeedMmin,
+                t.tangential_force_n as TangentialForceN
+            from (
+                select *
+                from wkr.telemetry_spindle
+                where machine_id = @MachineId
+                  and tool_id = @ToolId
+                  and cut_flag = true
+                order by ts desc
+                limit @WindowSize
+            ) t
+            order by t.ts asc;
+            """;
 
-        var rows = await conn.QueryAsync<CutRow>(new CommandDefinition(
-            sql,
-            new
-            {
-                MachineId = machineId,
-                ToolId = toolId,
-                WindowSize = windowSize
-            },
-            cancellationToken: ct
-        ));
+        var rows = await conn.QueryAsync<CutWindowRow>(
+            new CommandDefinition(
+                sql,
+                new
+                {
+                    MachineId = machineId,
+                    ToolId = toolId,
+                    WindowSize = windowSize
+                },
+                cancellationToken: ct));
 
         return rows.ToList();
     }
 }
 
-public sealed class ActivePair
+public sealed class ActiveMachineToolPair
 {
-    public string MachineId { get; set; } = "";
-    public string ToolId { get; set; } = "";
-    public DateTimeOffset LastTs { get; set; }
+    public string MachineId { get; init; } = "";
+    public string ToolId { get; init; } = "";
+    public DateTimeOffset LastTs { get; init; }
+}
+
+public sealed class CutWindowRow
+{
+    public DateTimeOffset Ts { get; init; }
+
+    public int SpindleRpm { get; init; }
+    public float SpindleCurrentA { get; init; }
+    public float SpindlePowerKw { get; init; }
+
+    public float? CuttingSpeedMmin { get; init; }
+    public float? TangentialForceN { get; init; }
 }

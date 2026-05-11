@@ -16,6 +16,7 @@ builder.Services.AddSingleton<TelemetryRepository>();
 builder.Services.AddSingleton<RulRepository>();
 builder.Services.AddSingleton<AlarmRepository>();
 builder.Services.AddSingleton<FeatureExtractor>();
+builder.Services.AddSingleton<MachineStateResolver>();
 
 builder.Services.AddHttpClient<MlClient>(client =>
 {

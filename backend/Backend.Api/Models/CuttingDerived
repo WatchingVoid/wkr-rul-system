@@ -1,0 +1,8 @@
+namespace Backend.Api.Models;
+
+public sealed class CuttingDerived
+{
+    public float? CuttingSpeedMmin { get; init; }
+    public float? PowerFromTorqueKw { get; init; }
+    public float? TangentialForceN { get; init; }
+}
