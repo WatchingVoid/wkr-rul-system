@@ -1,7 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { BehaviorSubject, switchMap, timer } from 'rxjs';
+import { merge, shareReplay, Subject, switchMap, timer } from 'rxjs';
 import { DashboardApiService } from './services/dashboard-api.service';
 
 @Component({
@@ -15,20 +15,20 @@ export class App {
   machineId = 'HAAS_VF2_NGC_01';
   toolId = 'T12';
 
-  private readonly refresh$ = new BehaviorSubject<void>(undefined);
+  private readonly manualRefresh$ = new Subject<void>();
 
-  readonly vm$ = timer(0, 2000).pipe(
-    switchMap(() => this.refresh$),
-    switchMap(() => this.api.getDashboard(this.machineId, this.toolId))
+  readonly vm$ = merge(timer(0, 2000), this.manualRefresh$).pipe(
+    switchMap(() => this.api.getDashboard(this.machineId, this.toolId)),
+    shareReplay({ bufferSize: 1, refCount: true })
   );
 
   constructor(private readonly api: DashboardApiService) {}
 
   refresh(): void {
-    this.refresh$.next();
+    this.manualRefresh$.next();
   }
 
-  stateClass(state: string): string {
+  stateClass(state?: string): string {
     switch ((state ?? '').toLowerCase()) {
       case 'critical':
         return 'state-critical';
@@ -41,22 +41,28 @@ export class App {
     }
   }
 
-  machineClass(machineState: string): string {
-    switch ((machineState ?? '').toLowerCase()) {
-      case 'stopped':
-        return 'machine-stopped';
+  processClass(state?: string): string {
+    switch ((state ?? '').toLowerCase()) {
       case 'cutting':
-        return 'machine-cutting';
+        return 'process-cutting';
       case 'running':
-        return 'machine-running';
+        return 'process-running';
+      case 'stopped':
+        return 'process-stopped';
       case 'idle':
-        return 'machine-idle';
+        return 'process-idle';
       default:
-        return 'machine-unknown';
+        return 'process-unknown';
     }
   }
 
-  formatNumber(value: number | undefined, digits = 1): string {
+  eventClass(level: number): string {
+    if (level >= 2) return 'event-critical';
+    if (level === 1) return 'event-warning';
+    return 'event-normal';
+  }
+
+  formatNumber(value: number | null | undefined, digits = 1): string {
     if (value === undefined || value === null || Number.isNaN(value)) {
       return '-';
     }
@@ -67,7 +73,7 @@ export class App {
     });
   }
 
-  formatDate(value?: string): string {
+  formatDate(value?: string | null): string {
     if (!value) return '-';
 
     const date = new Date(value);

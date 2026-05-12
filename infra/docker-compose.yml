@@ -88,10 +88,6 @@ services:
       STOP_AFTER_CRITICAL: "true"
       STOP_FRAMES: "60"
     depends_on:
-      db:
-        condition: service_healthy
-      ml:
-        condition: service_healthy
       backend:
         condition: service_started
 

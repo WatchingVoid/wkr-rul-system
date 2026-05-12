@@ -2,7 +2,7 @@
   <header class="header">
     <div>
       <h1>WKR RUL System</h1>
-      <p>Мониторинг состояния станка и остаточного ресурса инструмента</p>
+      <p>Операторская панель мониторинга процесса резания и остаточного ресурса инструмента</p>
     </div>
 
     <div class="filters">
@@ -21,160 +21,253 @@
   </header>
 
   <ng-container *ngIf="vm$ | async as vm">
-    <section class="status-card" [ngClass]="stateClass(vm.state)">
-      <div>
-        <div class="label">Состояние инструмента</div>
-        <div class="main-state">{{ vm.alarmCode }}</div>
-        <div class="message">{{ vm.message }}</div>
-      </div>
-
-      <div class="rul">
-        <div class="label">Остаточный ресурс</div>
-        <div class="rul-value">{{ formatNumber(vm.rulMinutes, 1) }}</div>
-        <div class="unit">мин</div>
-      </div>
-    </section>
-
-    <section class="grid">
-      <article class="card" [ngClass]="machineClass(vm.machineState)">
-        <h2>Состояние станка</h2>
-
-        <div class="kv">
-          <span>Machine ID</span>
-          <strong>{{ vm.machineId }}</strong>
+    <section class="top-grid">
+      <article class="status-card" [ngClass]="stateClass(vm.lastPrediction?.state)">
+        <div>
+          <div class="label">Состояние инструмента</div>
+          <div class="main-state">
+            {{ vm.lastPrediction?.alarmCode || 'NO_PREDICTION' }}
+          </div>
+          <div class="message">
+            {{ vm.lastPrediction?.message || 'Нет прогноза остаточного ресурса.' }}
+          </div>
         </div>
 
-        <div class="kv">
-          <span>Tool ID</span>
-          <strong>{{ vm.toolId }}</strong>
-        </div>
-
-        <div class="kv">
-          <span>Machine state</span>
-          <strong>{{ vm.machineState }}</strong>
-        </div>
-
-        <div class="kv">
-          <span>Spindle state</span>
-          <strong>{{ vm.spindleState }}</strong>
-        </div>
-
-        <div class="kv">
-          <span>Stop required</span>
-          <strong>{{ vm.stopRequired ? 'Да' : 'Нет' }}</strong>
-        </div>
-
-        <div class="kv" *ngIf="vm.stopReason">
-          <span>Stop reason</span>
-          <strong>{{ vm.stopReason }}</strong>
-        </div>
-
-        <div class="kv" *ngIf="vm.controlAction">
-          <span>Control action</span>
-          <strong>{{ vm.controlAction }}</strong>
+        <div class="rul">
+          <div class="label">RUL</div>
+          <div class="rul-value">
+            {{ formatNumber(vm.lastPrediction?.rulMinutes, 1) }}
+          </div>
+          <div class="unit">мин</div>
         </div>
       </article>
 
+      <article class="process-card" [ngClass]="processClass(vm.processState)">
+        <div class="label">Процесс резания</div>
+        <div class="process-state">{{ vm.processText }}</div>
+
+        <div class="process-details">
+          <span>Machine state: <b>{{ vm.lastTelemetry?.machineState || '-' }}</b></span>
+          <span>Spindle state: <b>{{ vm.lastTelemetry?.spindleState || '-' }}</b></span>
+          <span>Stop required: <b>{{ vm.lastTelemetry?.stopRequired ? 'Да' : 'Нет' }}</b></span>
+        </div>
+
+        <div class="stop-reason" *ngIf="vm.lastTelemetry?.stopReason || vm.lastTelemetry?.controlAction">
+          <div>Причина: {{ vm.lastTelemetry?.stopReason || '-' }}</div>
+          <div>Действие: {{ vm.lastTelemetry?.controlAction || '-' }}</div>
+        </div>
+      </article>
+    </section>
+
+    <section class="grid">
       <article class="card">
-        <h2>Текущая телеметрия</h2>
+        <h2>Исходная телеметрия станка</h2>
 
         <div class="metric-row">
           <div class="metric">
-            <span>RPM</span>
-            <strong>{{ vm.spindleRpm }}</strong>
+            <span>n, об/мин</span>
+            <strong>{{ vm.lastTelemetry?.spindleRpm ?? 0 }}</strong>
           </div>
 
           <div class="metric">
-            <span>Ток, А</span>
-            <strong>{{ formatNumber(vm.spindleCurrentA, 2) }}</strong>
+            <span>I, А</span>
+            <strong>{{ formatNumber(vm.lastTelemetry?.spindleCurrentA, 2) }}</strong>
           </div>
 
           <div class="metric">
-            <span>Мощность, кВт</span>
-            <strong>{{ formatNumber(vm.spindlePowerKw, 2) }}</strong>
+            <span>P, кВт</span>
+            <strong>{{ formatNumber(vm.lastTelemetry?.spindlePowerKw, 2) }}</strong>
           </div>
 
           <div class="metric">
-            <span>Подача, мм/мин</span>
-            <strong>{{ vm.feedMmMin }}</strong>
+            <span>F, мм/мин</span>
+            <strong>{{ vm.lastTelemetry?.feedMmMin ?? 0 }}</strong>
           </div>
         </div>
 
         <div class="kv">
           <span>Программа</span>
-          <strong>{{ vm.program }}</strong>
+          <strong>{{ vm.lastTelemetry?.program || '-' }}</strong>
         </div>
 
         <div class="kv">
-          <span>Резание</span>
-          <strong>{{ vm.cutFlag ? 'Да' : 'Нет' }}</strong>
+          <span>Резание активно</span>
+          <strong>{{ vm.lastTelemetry?.cutFlag ? 'Да' : 'Нет' }}</strong>
         </div>
 
         <div class="kv">
           <span>Время телеметрии</span>
-          <strong>{{ formatDate(vm.telemetryTs) }}</strong>
+          <strong>{{ formatDate(vm.lastTelemetry?.ts) }}</strong>
         </div>
       </article>
 
       <article class="card">
-        <h2>Прогноз RUL</h2>
+        <h2>Расчётные параметры по формулам ВКР</h2>
+
+        <div class="metric-row">
+          <div class="metric">
+            <span>D, мм</span>
+            <strong>{{ formatNumber(vm.lastTelemetry?.toolDiameterMm, 1) }}</strong>
+          </div>
+
+          <div class="metric">
+            <span>v, м/мин</span>
+            <strong>{{ formatNumber(vm.lastTelemetry?.cuttingSpeedMmin, 1) }}</strong>
+          </div>
+
+          <div class="metric">
+            <span>Ne, кВт</span>
+            <strong>{{ formatNumber(vm.lastTelemetry?.powerFromTorqueKw, 2) }}</strong>
+          </div>
+
+          <div class="metric">
+            <span>Pz, Н</span>
+            <strong>{{ formatNumber(vm.lastTelemetry?.tangentialForceN, 1) }}</strong>
+          </div>
+        </div>
+
+        <div class="formula-note">
+          Параметры v, Ne и Pz рассчитываются на backend по формулам из ВКР и передаются в клиент вместе с телеметрией.
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>Решение системы</h2>
+
+        <div class="kv">
+          <span>Модель</span>
+          <strong>{{ vm.lastPrediction?.modelVersion || '-' }}</strong>
+        </div>
 
         <div class="kv">
           <span>Alarm level</span>
-          <strong>{{ vm.alarmLevel }}</strong>
+          <strong>{{ vm.lastPrediction?.alarmLevel ?? '-' }}</strong>
         </div>
 
         <div class="kv">
           <span>State</span>
-          <strong>{{ vm.state }}</strong>
-        </div>
-
-        <div class="kv">
-          <span>Model</span>
-          <strong>{{ vm.modelVersion || '-' }}</strong>
+          <strong>{{ vm.lastPrediction?.state || '-' }}</strong>
         </div>
 
         <div class="kv">
           <span>Время прогноза</span>
-          <strong>{{ formatDate(vm.predictionTs) }}</strong>
+          <strong>{{ formatDate(vm.lastPrediction?.ts) }}</strong>
         </div>
 
         <div class="action">
-          {{ vm.requiredAction }}
+          {{ vm.lastPrediction?.requiredAction || 'Ожидание прогноза.' }}
         </div>
       </article>
     </section>
 
-    <section class="card table-card">
-      <h2>События станка</h2>
+    <section class="charts-grid">
+      <article class="chart-card">
+        <h3>Мощность шпинделя P(t), кВт</h3>
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none">
+          <polyline [attr.points]="vm.powerPath"></polyline>
+        </svg>
+      </article>
 
-      <table>
-        <thead>
-          <tr>
-            <th>Время</th>
-            <th>Код</th>
-            <th>Уровень</th>
-            <th>Сообщение</th>
-            <th>Состояние</th>
-            <th>Действие</th>
-          </tr>
-        </thead>
+      <article class="chart-card">
+        <h3>Ток шпинделя I(t), А</h3>
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none">
+          <polyline [attr.points]="vm.currentPath"></polyline>
+        </svg>
+      </article>
 
-        <tbody>
-          <tr *ngFor="let event of vm.events">
-            <td>{{ formatDate(event.ts) }}</td>
-            <td>{{ event.eventCode }}</td>
-            <td>{{ event.eventLevel }}</td>
-            <td>{{ event.eventMessage }}</td>
-            <td>{{ event.machineState || '-' }} / {{ event.spindleState || '-' }}</td>
-            <td>{{ event.controlAction || '-' }}</td>
-          </tr>
+      <article class="chart-card">
+        <h3>Скорость шпинделя n(t), об/мин</h3>
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none">
+          <polyline [attr.points]="vm.rpmPath"></polyline>
+        </svg>
+      </article>
 
-          <tr *ngIf="vm.events.length === 0">
-            <td colspan="6" class="empty">Событий пока нет</td>
-          </tr>
-        </tbody>
-      </table>
+      <article class="chart-card">
+        <h3>Скорость резания v(t), м/мин</h3>
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none">
+          <polyline [attr.points]="vm.cuttingSpeedPath"></polyline>
+        </svg>
+      </article>
+
+      <article class="chart-card">
+        <h3>Касательная сила Pz(t), Н</h3>
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none">
+          <polyline [attr.points]="vm.forcePath"></polyline>
+        </svg>
+      </article>
+
+      <article class="chart-card">
+        <h3>Остаточный ресурс RUL(t), мин</h3>
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none">
+          <polyline [attr.points]="vm.rulPath"></polyline>
+        </svg>
+      </article>
+    </section>
+
+    <section class="tables-grid">
+      <article class="card table-card">
+        <h2>Последние точки процесса резания</h2>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Время</th>
+              <th>n</th>
+              <th>I</th>
+              <th>P</th>
+              <th>v</th>
+              <th>Pz</th>
+              <th>Режим</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            <tr *ngFor="let row of vm.telemetryHistory.slice(-15).reverse()">
+              <td>{{ formatDate(row.ts) }}</td>
+              <td>{{ row.spindleRpm }}</td>
+              <td>{{ formatNumber(row.spindleCurrentA, 2) }}</td>
+              <td>{{ formatNumber(row.spindlePowerKw, 2) }}</td>
+              <td>{{ formatNumber(row.cuttingSpeedMmin, 1) }}</td>
+              <td>{{ formatNumber(row.tangentialForceN, 1) }}</td>
+              <td>{{ row.machineState }}</td>
+            </tr>
+
+            <tr *ngIf="vm.telemetryHistory.length === 0">
+              <td colspan="7" class="empty">Нет телеметрии</td>
+            </tr>
+          </tbody>
+        </table>
+      </article>
+
+      <article class="card table-card">
+        <h2>События станка</h2>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Время</th>
+              <th>Код</th>
+              <th>Уровень</th>
+              <th>Сообщение</th>
+              <th>Действие</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            <tr *ngFor="let event of vm.machineEvents" [ngClass]="eventClass(event.eventLevel)">
+              <td>{{ formatDate(event.ts) }}</td>
+              <td>{{ event.eventCode }}</td>
+              <td>{{ event.eventLevel }}</td>
+              <td>{{ event.eventMessage }}</td>
+              <td>{{ event.controlAction || '-' }}</td>
+            </tr>
+
+            <tr *ngIf="vm.machineEvents.length === 0">
+              <td colspan="5" class="empty">Событий пока нет</td>
+            </tr>
+          </tbody>
+        </table>
+      </article>
     </section>
   </ng-container>
 </div>
